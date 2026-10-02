@@ -4,10 +4,10 @@
 Use npm or yarn
 ```bash
 # npm
-npm install klinecharts @klinecharts/pro
+npm install klinecharts@10.0.3 @klinecharts/pro
 
 # yarn
-yarn install klinecharts @klinecharts/pro
+yarn add klinecharts@10.0.3 @klinecharts/pro
 ```
 If it is imported directly through a script tag, you can use either of the following two CDNs
 ::: warning Note

@@ -29,19 +29,19 @@ class CustomDatafeed {
 
   /**
    * 获取历史k线数据
-   * 当标的和周期发生变化的时候触发
+  * 初始化、切换标的/周期或拖动到数据边界时触发
    * 
-   * 返回标的k线数据数组
+  * 返回毫秒时间戳的 K 线数组。也可返回带分页信息的 DatafeedHistoryResult。
    */
-  getHistoryKLineData (symbol: SymbolInfo, period: Period, from: number, to: number): Promise<KLineData[]> {
+  getHistoryKLineData (symbol: SymbolInfo, period: Period, from: number, to: number): Promise<KLineData[] | DatafeedHistoryResult> {
     // 完成数据请求
   }
 
   /**
    * 订阅标的在某个周期的实时数据
-   * 当标的和周期发生变化的时候触发
+  * 初始化历史数据后由图表订阅；切换标的/周期或销毁时取消
    * 
-   * 通过callback告知图表接收数据
+  * 每次通过 callback 推送一根 KLineData
    */
   subscribe (symbol: SymbolInfo, period: Period, callback: DatafeedSubscribeCallback): void {
     // 完成ws订阅或者http轮询
@@ -57,6 +57,17 @@ class CustomDatafeed {
   }
 }
 ```
+
+历史结果可以继续返回 `KLineData[]`。如需准确控制双向分页，可返回：
+```typescript
+{
+  bars: KLineData[],
+  hasMoreBefore: boolean,
+  hasMoreAfter: boolean
+}
+```
+
+`hasMoreBefore` 表示还有更早的数据，`hasMoreAfter` 表示还有更新的数据。数组形式为兼容旧 Datafeed 保留，Pro 会以每页 500 根的结果长度估算是否还有数据。所有 `timestamp` 必须为毫秒；Pro 会按时间升序整理并合并重复时间戳。实时回调每次只接收一根 K 线，同一时间戳用于更新当前 bar。历史加载、分页和订阅/取消订阅由 KLineChart v10 的 DataLoader 生命周期触发，业务代码不要再直接调用图表数据写入 API。
 
 ### 第二步，接入自定义数据
 ```typescript

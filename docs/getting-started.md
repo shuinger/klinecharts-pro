@@ -3,10 +3,10 @@
 通过 npm 或 yarn 命令安装 
 ```bash
 # npm
-npm install klinecharts @klinecharts/pro
+npm install klinecharts@10.0.3 @klinecharts/pro
 
 # yarn
-yarn install klinecharts @klinecharts/pro
+yarn add klinecharts@10.0.3 @klinecharts/pro
 ```
 如果是直接通过 script 标签引入，可以使用下面两个 CDN 中的任意一个即可
 ::: warning 注意

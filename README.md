@@ -14,10 +14,10 @@
 ### Using npm or yarn
 ```bash
 # using npm
-npm install @klinecharts/pro --save
+npm install @klinecharts/pro klinecharts@10.0.3
 
 # using yarn
-yarn add @klinecharts/pro
+yarn add @klinecharts/pro klinecharts@10.0.3
 ```
 
 ### Using unpkg or jsDelivr

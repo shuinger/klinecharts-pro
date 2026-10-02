@@ -12,7 +12,7 @@
  * limitations under the License.
  */
 
-import { OverlayTemplate, utils, registerFigure } from 'klinecharts'
+import { OverlayTemplate, utils } from 'klinecharts'
 
 import { getDistance, getRotateCoordinate, getRayLine } from './utils'
 

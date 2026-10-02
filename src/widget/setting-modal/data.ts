@@ -50,21 +50,6 @@ export function getOptions (locale: string) {
       component: 'switch'
     },
     {
-      key: 'yAxis.type',
-      text: i18n('price_axis_type', locale),
-      component: 'select',
-      dataSource: [
-        { key: 'normal', text: i18n('normal', locale) },
-        { key: 'percentage', text: i18n('percentage', locale) },
-        { key: 'log', text: i18n('log', locale) }
-      ],
-    },
-    {
-      key: 'yAxis.reverse',
-      text: i18n('reverse_coordinate', locale),
-      component: 'switch',
-    },
-    {
       key: 'grid.show',
       text: i18n('grid_show', locale),
       component: 'switch',

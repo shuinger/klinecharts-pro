@@ -23,11 +23,15 @@ import type { SelectDataSourceItem } from '../../component'
 import i18n from '../../i18n'
 import { getOptions } from './data'
 
+type YAxisName = 'normal' | 'percentage' | 'logarithm'
+
 export interface SettingModalProps {
   locale: string
   currentStyles: Styles
+  currentYAxis: { name: YAxisName, reverse: boolean }
   onClose: () => void
   onChange: (style: DeepPartial<Styles>) => void
+  onYAxisChange: (options: { name?: YAxisName, reverse?: boolean }) => void
   onRestoreDefault: (options: SelectDataSourceItem[]) => void
 }
 
@@ -58,6 +62,7 @@ const SettingModal: Component<SettingModalProps> = props => {
           children: i18n('restore_default', props.locale),
           onClick: () => {
             props.onRestoreDefault(options())
+            props.onYAxisChange({ name: 'normal', reverse: false })
             props.onClose()
           }
         }
@@ -106,6 +111,27 @@ const SettingModal: Component<SettingModalProps> = props => {
             }
           }
         </For>
+        <span>{i18n('price_axis_type', props.locale)}</span>
+        <Select
+          style={{ width: '120px' }}
+          value={i18n(props.currentYAxis.name === 'logarithm' ? 'log' : props.currentYAxis.name, props.locale)}
+          dataSource={[
+            { key: 'normal', text: i18n('normal', props.locale) },
+            { key: 'percentage', text: i18n('percentage', props.locale) },
+            { key: 'log', text: i18n('log', props.locale) }
+          ]}
+          onSelected={data => {
+            const name = (data as SelectDataSourceItem).key
+            if (name === 'log') {
+              props.onYAxisChange({ name: 'logarithm' })
+            } else if (name === 'normal' || name === 'percentage') {
+              props.onYAxisChange({ name })
+            }
+          }}/>
+        <span>{i18n('reverse_coordinate', props.locale)}</span>
+        <Switch
+          open={props.currentYAxis.reverse}
+          onChange={() => { props.onYAxisChange({ reverse: !props.currentYAxis.reverse }) }}/>
       </div> 
     </Modal>
   )

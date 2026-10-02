@@ -39,6 +39,10 @@ export default defineConfig({
             link: '/data-access'
           },
           {
+            text: 'v10 迁移',
+            link: '/v10-migration'
+          },
+          {
             text: 'API',
             link: '/api'
           },
@@ -82,6 +86,10 @@ export default defineConfig({
           {
             text: 'Data access',
             link: '/en-US/data-access'
+          },
+          {
+            text: 'v10 Migration',
+            link: '/en-US/v10-migration'
           },
           {
             text: 'API',

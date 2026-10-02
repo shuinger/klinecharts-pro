@@ -16,6 +16,74 @@ import { KLineData } from 'klinecharts'
 
 import { Datafeed, SymbolInfo, Period, DatafeedSubscribeCallback } from './types'
 
+interface PolygonConnection {
+  socket: WebSocket
+  authenticated: boolean
+  subscribedChannels: Set<string>
+  closeWhenOpen: boolean
+}
+
+interface PolygonSubscription {
+  market: string
+  ticker: string
+  channel: string
+  period: Period
+  callbacks: Set<DatafeedSubscribeCallback>
+  currentBucket: number | null
+  bars: Map<number, KLineData>
+}
+
+function getPeriodBucket (timestamp: number, period: Period): number {
+  const span = period.multiplier
+  const date = new Date(timestamp)
+  switch (period.timespan) {
+    case 'second': return Math.floor(timestamp / (span * 1000)) * span * 1000
+    case 'minute': return Math.floor(timestamp / (span * 60 * 1000)) * span * 60 * 1000
+    case 'hour': return Math.floor(timestamp / (span * 60 * 60 * 1000)) * span * 60 * 60 * 1000
+    case 'day': {
+      const day = Math.floor(timestamp / 86400000)
+      return Math.floor(day / span) * span * 86400000
+    }
+    case 'week': {
+      const day = Math.floor(timestamp / 86400000)
+      const monday = day - ((day + 3) % 7 + 7) % 7
+      return (4 + Math.floor((monday - 4) / (span * 7)) * span * 7) * 86400000
+    }
+    case 'month': {
+      const month = date.getUTCFullYear() * 12 + date.getUTCMonth()
+      const bucket = Math.floor(month / span) * span
+      return Date.UTC(Math.floor(bucket / 12), bucket % 12, 1)
+    }
+    case 'year': return Date.UTC(Math.floor(date.getUTCFullYear() / span) * span, 0, 1)
+    default: return timestamp
+  }
+}
+
+function updateSubscriptionBar (subscription: PolygonSubscription, sourceBar: KLineData): KLineData | null {
+  const bucket = getPeriodBucket(sourceBar.timestamp, subscription.period)
+  if (subscription.currentBucket !== bucket) {
+    if (subscription.currentBucket !== null && bucket < subscription.currentBucket) {
+      return null
+    }
+    subscription.currentBucket = bucket
+    subscription.bars.clear()
+  }
+  subscription.bars.set(sourceBar.timestamp, sourceBar)
+  const bars = Array.from(subscription.bars.values()).sort((left, right) => left.timestamp - right.timestamp)
+  const first = bars[0]
+  const last = bars[bars.length - 1]
+  const volume = bars.reduce((total, bar) => total + (bar.volume ?? 0), 0)
+  const weightedTurnover = bars.reduce((total, bar) => total + (bar.turnover ?? 0) * (bar.volume ?? 0), 0)
+  return {
+    timestamp: bucket,
+    open: first.open,
+    high: Math.max(...bars.map(bar => bar.high)),
+    low: Math.min(...bars.map(bar => bar.low)),
+    close: last.close,
+    volume,
+    turnover: volume > 0 ? weightedTurnover / volume : last.turnover
+  }
+}
 
 export default class DefaultDatafeed implements Datafeed {
   constructor (apiKey: string) {
@@ -24,9 +92,9 @@ export default class DefaultDatafeed implements Datafeed {
 
   private _apiKey: string
 
-  private _prevSymbolMarket?: string
+  private _connections = new Map<string, PolygonConnection>()
 
-  private _ws?: WebSocket
+  private _subscriptions = new Map<string, PolygonSubscription>()
 
   async searchSymbols (search?: string): Promise<SymbolInfo[]> {
     const response = await fetch(`https://api.polygon.io/v3/reference/tickers?apiKey=${this._apiKey}&active=true&search=${search ?? ''}`)
@@ -45,8 +113,14 @@ export default class DefaultDatafeed implements Datafeed {
 
   async getHistoryKLineData (symbol: SymbolInfo, period: Period, from: number, to: number): Promise<KLineData[]> {
     const response = await fetch(`https://api.polygon.io/v2/aggs/ticker/${symbol.ticker}/range/${period.multiplier}/${period.timespan}/${from}/${to}?apiKey=${this._apiKey}`)
+    if (!response.ok) {
+      throw new Error(`Polygon history request failed with status ${response.status}`)
+    }
     const result = await response.json()
-    return await (result.results || []).map((data: any) => ({
+    if (result.status === 'ERROR') {
+      throw new Error(result.error ?? result.message ?? 'Polygon history request failed')
+    }
+    return (result.results || []).map((data: any) => ({
       timestamp: data.t,
       open: data.o,
       high: data.h,
@@ -58,38 +132,119 @@ export default class DefaultDatafeed implements Datafeed {
   }
 
   subscribe (symbol: SymbolInfo, period: Period, callback: DatafeedSubscribeCallback): void {
-    if (this._prevSymbolMarket !== symbol.market) {
-      this._ws?.close()
-      this._ws = new WebSocket(`wss://delayed.polygon.io/${symbol.market}`)
-      this._ws.onopen = () => {
-        this._ws?.send(JSON.stringify({ action: 'auth', params: this._apiKey }))
-      }
-      this._ws.onmessage = event => {
-        const result = JSON.parse(event.data)
-        if (result[0].ev === 'status') {
-          if (result[0].status === 'auth_success') {
-            this._ws?.send(JSON.stringify({ action: 'subscribe', params: `T.${symbol.ticker}`}))
-          }
-        } else {
-          if ('sym' in result) {
-            callback({
-              timestamp: result.s,
-              open: result.o,
-              high: result.h,
-              low: result.l,
-              close: result.c,
-              volume: result.v,
-              turnover: result.vw
-            })
-          }
-        }
-      }
-    } else {
-      this._ws?.send(JSON.stringify({ action: 'subscribe', params: `T.${symbol.ticker}`}))
+    const market = symbol.market ?? 'stocks'
+    const key = `${market}|${symbol.ticker}|${period.multiplier}|${period.timespan}`
+    const existing = this._subscriptions.get(key)
+    if (existing) {
+      existing.callbacks.add(callback)
+      return
     }
-    this._prevSymbolMarket = symbol.market
+    const channel = period.timespan === 'second' ? 'A' : 'AM'
+    this._subscriptions.set(key, {
+      market,
+      ticker: symbol.ticker,
+      channel,
+      period,
+      callbacks: new Set([callback]),
+      currentBucket: null,
+      bars: new Map()
+    })
+    const connection = this.getConnection(market)
+    const channelKey = `${channel}.${symbol.ticker}`
+    const isNewChannel = !connection.subscribedChannels.has(channelKey)
+    connection.subscribedChannels.add(channelKey)
+    if (connection.authenticated && isNewChannel && connection.socket.readyState === WebSocket.OPEN) {
+      connection.socket.send(JSON.stringify({ action: 'subscribe', params: channelKey }))
+    }
   }
 
   unsubscribe(symbol: SymbolInfo, period: Period): void {
+    const market = symbol.market ?? 'stocks'
+    const key = `${market}|${symbol.ticker}|${period.multiplier}|${period.timespan}`
+    this._subscriptions.delete(key)
+    const connection = this._connections.get(market)
+    if (!connection) {
+      return
+    }
+    const channel = period.timespan === 'second' ? 'A' : 'AM'
+    const channelKey = `${channel}.${symbol.ticker}`
+    const hasChannelSubscription = Array.from(this._subscriptions.values()).some(subscription =>
+      subscription.market === market && subscription.channel === channel && subscription.ticker === symbol.ticker
+    )
+    if (!hasChannelSubscription) {
+      connection.subscribedChannels.delete(channelKey)
+      if (connection.authenticated && connection.socket.readyState === WebSocket.OPEN) {
+        connection.socket.send(JSON.stringify({ action: 'unsubscribe', params: channelKey }))
+      }
+    }
+    if (connection.subscribedChannels.size === 0) {
+      this._connections.delete(market)
+      if (connection.socket.readyState === WebSocket.CONNECTING) {
+        connection.closeWhenOpen = true
+      } else if (connection.socket.readyState !== WebSocket.CLOSED) {
+        connection.socket.close()
+      }
+    }
+  }
+
+  private getConnection (market: string): PolygonConnection {
+    const existing = this._connections.get(market)
+    if (existing) {
+      return existing
+    }
+    const connection: PolygonConnection = {
+      socket: new WebSocket(`wss://delayed.polygon.io/${market}`),
+      authenticated: false,
+      subscribedChannels: new Set(),
+      closeWhenOpen: false
+    }
+    connection.socket.onopen = () => {
+      if (connection.closeWhenOpen) {
+        connection.socket.close()
+        return
+      }
+      connection.socket.send(JSON.stringify({ action: 'auth', params: this._apiKey }))
+    }
+    connection.socket.onmessage = event => {
+      const messages = JSON.parse(event.data) as Array<Record<string, any>>
+      messages.forEach(message => {
+        if (message.ev === 'status') {
+          if (message.status === 'auth_success') {
+            connection.authenticated = true
+            connection.subscribedChannels.forEach(channel => {
+              connection.socket.send(JSON.stringify({ action: 'subscribe', params: channel }))
+            })
+          }
+          return
+        }
+        if (!message.sym || !Number.isFinite(message.s)) {
+          return
+        }
+        const sourceBar: KLineData = {
+          timestamp: message.s,
+          open: message.o,
+          high: message.h,
+          low: message.l,
+          close: message.c,
+          volume: message.v,
+          turnover: message.vw
+        }
+        this._subscriptions.forEach(subscription => {
+          if (subscription.market === market && subscription.ticker === message.sym && subscription.channel === message.ev) {
+            const bar = updateSubscriptionBar(subscription, sourceBar)
+            if (bar) {
+              subscription.callbacks.forEach(subscriber => { subscriber(bar) })
+            }
+          }
+        })
+      })
+    }
+    connection.socket.onclose = () => {
+      if (this._connections.get(market) === connection) {
+        this._connections.delete(market)
+      }
+    }
+    this._connections.set(market, connection)
+    return connection
   }
 }

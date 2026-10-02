@@ -35,9 +35,15 @@ export interface Period {
 
 export type DatafeedSubscribeCallback = (data: KLineData) => void
 
+export interface DatafeedHistoryResult {
+  bars: KLineData[]
+  hasMoreBefore?: boolean
+  hasMoreAfter?: boolean
+}
+
 export interface Datafeed {
   searchSymbols (search?: string): Promise<SymbolInfo[]>
-  getHistoryKLineData (symbol: SymbolInfo, period: Period, from: number, to: number): Promise<KLineData[]>
+  getHistoryKLineData (symbol: SymbolInfo, period: Period, from: number, to: number): Promise<KLineData[] | DatafeedHistoryResult>
   subscribe (symbol: SymbolInfo, period: Period, callback: DatafeedSubscribeCallback): void
   unsubscribe (symbol: SymbolInfo, period: Period): void
 }

@@ -29,19 +29,19 @@ class CustomDatafeed {
 
   /**
    * Pull historical k-line data
-   * Triggered when the symbol and period change
+  * Triggered on initialization, symbol/period changes, and boundary pagination
    * 
-   * Returns the symbol k-line data array
+  * Returns bars with millisecond timestamps, or a DatafeedHistoryResult with paging metadata.
    */
-  getHistoryKLineData (symbol: SymbolInfo, period: Period, from: number, to: number): Promise<KLineData[]> {
+  getHistoryKLineData (symbol: SymbolInfo, period: Period, from: number, to: number): Promise<KLineData[] | DatafeedHistoryResult> {
     // Complete data request
   }
 
   /**
    * Subscribe to real-time data of the symbol in a certain period
-   * Triggered when the symbol and period change
+  * Subscribed after history initialization; unsubscribed on symbol/period changes or disposal
    * 
-   * Notify chart to receive data through callback
+  * Push exactly one KLineData through each callback
    */
   subscribe (symbol: SymbolInfo, period: Period, callback: DatafeedSubscribeCallback): void {
     // Complete ws subscription or http polling
@@ -57,6 +57,17 @@ class CustomDatafeed {
   }
 }
 ```
+
+Returning `KLineData[]` remains supported. For exact two-way pagination, return:
+```typescript
+{
+  bars: KLineData[],
+  hasMoreBefore: boolean,
+  hasMoreAfter: boolean
+}
+```
+
+`hasMoreBefore` indicates older data and `hasMoreAfter` indicates newer data. The array form remains for existing datafeeds; Pro estimates availability from whether a 500-bar page is full. Every `timestamp` must be in milliseconds. Pro sorts bars chronologically and removes duplicate timestamps. Realtime callbacks deliver one bar at a time; matching timestamps update the current bar. KLineChart v10's DataLoader owns history, pagination, subscription, and unsubscription lifecycle, so datafeeds must not write directly to chart data APIs.
 
 ### Step 2: Access custom data
 ```typescript
